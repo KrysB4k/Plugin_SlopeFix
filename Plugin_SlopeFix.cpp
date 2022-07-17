@@ -90,8 +90,8 @@ StrMyData MyData;
 
 // ************  Utilities section  ****************
 
-#define RAD(a) (a * float(M_PI) / HALF_ANGLE)
-#define ANG(a) round(a * HALF_ANGLE / float(M_PI))
+#define RAD(a) ((a) * float(M_PI) / HALF_ANGLE)
+#define ANG(a) (round((a) * HALF_ANGLE / float(M_PI)))
 
 #define MAX_INTERPOLATED_ANGLE QUARTER_ANGLE
 #define SLOPE_LERP_FACTOR 0.08f
@@ -103,7 +103,7 @@ StrMyData MyData;
 
 int PatchSlopeNG(void)
 {
-	static BYTE VetBytes[]={0x53, 0x66, 0xB8, 0x00, 0x00, 0xFF, 0x25, 0x60, 0x06, 0x67, 0x00, 0x90, 0x90, 0x90};
+	static BYTE VetBytes[]={0x66, 0xB8, 0x00, 0x00, 0xFF, 0x25, 0x60, 0x06, 0x67, 0x00, 0x90, 0x90, 0x90, 0x90};
 	return ApplyCodePatch(0x420CD0, VetBytes, 14);
 }
 
@@ -131,18 +131,9 @@ bool CreateMyCodePatches(void)
 // type them in the order of ax value. So first asm proc in the list, will be called
 // with ax=0, while the second in the list will be called with ax=1 ect.
 
-BEGIN_ASM_PROC(Patch_00)
-	PUSH DWORD PTR [ESP+0Ch]
-	PUSH DWORD PTR [ESP+0Ch]
-	CALL TestLaraSlideNG
-	ADD ESP, 8h
-	MOV EBX, 420DFFh
-	JMP EBX
-END_ASM_PROC
-
 void *SubPatchArray[] = {
 // TYPE_HERE your asm procedure names to call from tomb4 code
-	&Patch_00,
+	TestLaraSlideNG,
 	NULL
 };
 
@@ -201,28 +192,17 @@ math_vector GetSlopeNormal(Tr4FloorInfo *floor, int x, int y, int z)
 		return dummy;
 
 	SlopeTilts tilts = GetTiltType(floor, x, y, z);
-	auto vec1 = math_vector(4.0f, float(tilts.tilt_x), 0);
-	auto vec2 = math_vector(0, float(tilts.tilt_z), 4.0f);
+	auto vec = math_vector(float(-tilts.tilt_x) / 4.0f, -1.0f, float(-tilts.tilt_z) / 4.0f);
 
-	return vec2.cross(vec1);
+	return vec;
 }
 
 short GetSlopeDirection(char tilt_x, char tilt_z)
 {
 	short angle = 0;
-	if (!tilt_x || !tilt_z) // legacy slope facing rules N, S, W or E
-	{
-		if (tilt_x > SLIDE_THRESH)
-			angle = -QUARTER_ANGLE;
-		else if (tilt_x < -SLIDE_THRESH)
-			angle = QUARTER_ANGLE;
-		if (tilt_z > SLIDE_THRESH && tilt_z > abs(tilt_x))
-			angle = -HALF_ANGLE;
-		else if (tilt_z < -SLIDE_THRESH && -tilt_z > abs(tilt_x))
-			angle = 0;
-	}
-	else // if tilt on both X and Z, calculate atan2 of tilts
-		angle = ANG(atan2(float(-tilt_x), float(-tilt_z)));
+
+	// calculate atan2 of tilts
+	angle = ANG(atan2(float(-tilt_x), float(-tilt_z)));
 
 	return angle;
 }
@@ -269,8 +249,8 @@ int TestLaraSlideNG(Tr4ItemInfo *item, Tr4CollInfo *coll)
 	/* start of block for detecting illegal slope */
 
 	// predict XZ position in next frame
-	int x_predict = item->pos.x_pos + round(item->speed * cos(-RAD(angleNow)));
-	int z_predict = item->pos.z_pos + round(item->speed * sin(-RAD(angleNow)));
+	int x_predict = item->pos.x_pos + round(item->speed * sin(RAD(angleNow)));
+	int z_predict = item->pos.z_pos + round(item->speed * cos(RAD(angleNow)));
 
 	tRoom = item->room_number;
 	Tr4FloorInfo* floorNext = (Tr4FloorInfo*) GetFloor(x_predict, item->pos.y_pos, z_predict, &tRoom);
@@ -291,9 +271,6 @@ int TestLaraSlideNG(Tr4ItemInfo *item, Tr4CollInfo *coll)
 			// cross the surface normals of both slopes to get sliding direction vector
 			auto intersect = normal1.cross(normal2);
 			
-			if (!intersect.y)
-				return 0; // if the Y of cross vector is 0, no sliding direction exists (buggy)
-
 			intersectOrient = ANG(atan2(intersect.x, intersect.z)); // buggy
 
 			// check if directions are indeed intersecting
