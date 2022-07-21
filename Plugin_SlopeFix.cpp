@@ -270,6 +270,12 @@ int TestLaraSlideNG(Tr4ItemInfo *item, Tr4CollInfo *coll)
 			// intersection line of two planes is parallel to cross product of normal vectors
 			// cross the surface normals of both slopes to get sliding direction vector
 			auto intersect = normal1.cross(normal2);
+
+			if (intersect.y < 0)
+			{
+				intersect.x = -intersect.x;
+				intersect.z = -intersect.z;
+			}
 			
 			intersectOrient = ANG(atan2(intersect.x, intersect.z)); // buggy
 
