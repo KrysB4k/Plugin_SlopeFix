@@ -1,0 +1,1 @@
+Plugin for TRLE that enables diagonal sliding directions on slopes.

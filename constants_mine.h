@@ -24,7 +24,9 @@
 #define QUARTER_ANGLE 0x4000
 #define EIGHTH_ANGLE 0x2000
 
-#define SLIDE_THRESH 2 // maximum tilt which still permits normal movement
+#define TILT_THRESHOLD 2 // maximum tilt which still permits normal movement
+
+#define CUST_SLIDING_PARAMETERS 1
 
 // type here the constant name for new progressive action you create
 // use progressive number to have always different value for each AXN_ constant/action

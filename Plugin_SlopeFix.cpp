@@ -4,6 +4,8 @@
 // the variables and memory zones you need.
 
 // ************  Top/Header section ************
+#define _USE_MATH_DEFINES
+#include <cmath>
 #include "stdafx.h"
 #include <string.h>
 #include <stdio.h>
@@ -27,7 +29,6 @@
 #include "constants_mine.h" // here you define your mnemonic constants
 #include "structures_mine.h" // here you type your structure definitions
 #include "Tomb4Discoveries_mine.h" // here type tomb4 procedures you discovered
-#include "mathvector.h"
 
 #include "trng.h" // list of trng functions imported from trng.cpp source. 
 
@@ -37,7 +38,7 @@
 // ************  Early function declarations ************
 // these declarations are here due to the funcs being used inside ASM code
 
-int TestLaraSlideNG(Tr4ItemInfo*, Tr4CollInfo*);
+int TestLaraSlideNew(Tr4ItemInfo*, Tr4CollInfo*);
 
 // ************  Global Variables Section *************
 
@@ -91,9 +92,8 @@ StrMyData MyData;
 // ************  Utilities section  ****************
 
 #define RAD(a) ((a) * float(M_PI) / HALF_ANGLE)
-#define ANG(a) (round((a) * HALF_ANGLE / float(M_PI)))
+#define ANG(a) (Round((a) * HALF_ANGLE / float(M_PI)))
 
-#define MAX_INTERPOLATED_ANGLE QUARTER_ANGLE
 #define SLOPE_LERP_FACTOR 0.08f
 
 // ************  Patcher Functions section  ***************
@@ -101,7 +101,7 @@ StrMyData MyData;
 // because they are necessary to do work the plugin with the trng dll
 // Anyway in many of these functions you can add your code
 
-int PatchSlopeNG(void)
+int PatchSlopeSliding(void)
 {
 	static BYTE VetBytes[]={0x66, 0xB8, 0x00, 0x00, 0xFF, 0x25, 0x60, 0x06, 0x67, 0x00, 0x90, 0x90, 0x90, 0x90};
 	return ApplyCodePatch(0x420CD0, VetBytes, 14);
@@ -120,7 +120,7 @@ bool CreateMyCodePatches(void)
 	// SET_PATCH(Path_RedirCollision)
 	// to call the function Patch_RedirCollision() created with TrngPatcher program (command Assmembly->Create Dynamic Patch Generator)
 	if (SetReservedDataZone(0x670660, 128) != APPC_OK) return false;
-	SET_PATCH(PatchSlopeNG);
+	SET_PATCH(PatchSlopeSliding);
 	return true;
 }
 
@@ -133,7 +133,7 @@ bool CreateMyCodePatches(void)
 
 void *SubPatchArray[] = {
 // TYPE_HERE your asm procedure names to call from tomb4 code
-	TestLaraSlideNG,
+	TestLaraSlideNew,
 	NULL
 };
 
@@ -155,9 +155,9 @@ END_ASM_PROC
 // ************  Helper Functions *****************
 
 
-int round(float x)
+int Round(float x)
 {
-	return x > 0.0 ? (int)(x+0.5f) : (int)(x-0.5f);
+	return (x > 0.0f) ? int(x+0.5f) : int(x-0.5f);
 }
 
 short GetOrientDiff(short sourceOrient, short targetOrient)
@@ -169,7 +169,12 @@ short GetOrientDiff(short sourceOrient, short targetOrient)
 
 short TurnLerp(short currentOrient, short targetOrient, float t)
 {
-	return short(currentOrient + t*GetOrientDiff(currentOrient, targetOrient));
+	float turn = GetOrientDiff(currentOrient, targetOrient) * t;
+
+	if (turn && abs(turn) < 1.0f)
+		turn = (turn < 0.0f) ? -1.0f : 1.0f;
+
+	return short(Round(currentOrient + turn));
 }
 
 bool IsIntersecting(short orientA, short orientB, short refOrient) // check if orientA and orientB intersect in regards to refOrient
@@ -185,72 +190,78 @@ bool IsIntersecting(short orientA, short orientB, short refOrient) // check if o
 	return false;
 }
 
-math_vector GetSlopeNormal(Tr4FloorInfo *floor, int x, int y, int z)
+phd_vector GetSlopeNormal(Tr4FloorInfo *floor, int x, int y, int z)
 {
-	math_vector dummy(0.0f, -1.0f, 0.0f);
+	phd_vector dummy = {0, -1, 0};
 	if (!floor)
 		return dummy;
 
 	SlopeTilts tilts = GetTiltType(floor, x, y, z);
-	auto vec = math_vector(float(-tilts.tilt_x) / 4.0f, -1.0f, float(-tilts.tilt_z) / 4.0f);
+	phd_vector vec = {-tilts.tilt_x, -4, -tilts.tilt_z};
 
 	return vec;
 }
 
+phd_vector CrossProduct(const phd_vector& v1, const phd_vector& v2)
+{
+	phd_vector cross = {
+		v1.y*v2.z - v1.z*v2.y,
+		v1.z*v2.x - v1.x*v2.z,
+		v1.x*v2.y - v1.y*v2.x
+	};
+
+	return cross;
+}
+
 short GetSlopeDirection(char tilt_x, char tilt_z)
 {
-	short angle = 0;
-
-	// calculate atan2 of tilts
-	angle = ANG(atan2(float(-tilt_x), float(-tilt_z)));
+	// calculate atan2 of tilts, convert to angle short
+	short angle = ANG(atan2(float(-tilt_x), float(-tilt_z)));
 
 	return angle;
 }
 
 
-// ************  TestLaraSlideNG  *****************
+// ************  TestLaraSlideNew  *****************
 
 	/* ### Synopsis ###
 
-	Returns 0 if sliding is not possible on given slope or 1 if conditions are met and sliding succeeds.
-	Fully replaces old TestLaraSlide function (0x420CD0). Most notable changes are arbitrary sliding directions
-	via atan2 on the XZ tilts and a method of handling illegal slopes.
-    Other changes are in the way anim states and sliding direction is applied to Lara. Sliding anims
-	are reset only if Lara wasn't already sliding or if slope direction changed beyond MAX_INTERPOLATED_ANGLE. Final
-	facing is applied instantly in such case or if an illegal slope is encountered. In other case (no illegal
-	slope and within MAX_INTERPOLATED_ANGLE threshold) item->pos.y_rot is linearly interpolated over time towards the
-	current slope facing.
+	Fully replaces old TestLaraSlide function in tomb4 (0x420CD0). 
+	Returns 0 if sliding is not possible on given slope or 1 if right conditions are met and sliding succeeds.
+	Most notable changes are arbitrary sliding directions via atan2 on the XZ tilts and a method of handling
+	illegal slopes. Other changes are in the way anim states and sliding direction is applied to Lara. Sliding
+	anims are reset only if Lara wasn't already sliding or if slope direction changed beyond MaxInterpolatedAngle.
+	Final facing is applied instantly in such case or if an illegal slope is encountered. In other case (no
+	illegal slope and within MaxInterpolatedAngle threshold) item->pos.y_rot is linearly interpolated over time
+	towards the current slope facing, with a percentage factor of SlopeLerpFactor.
 	
-	How illegal slopes are handled:
-	Illegal here means two conjoined slopes contradicting in direction, which results in Lara "wiggling" between
-	two directions or being in endless slide stop anim loop. She can't pass from one slope to the
-	other, getting stuck. With diagonal sliding directions allowed, there are more situations where this can occur
-	than with original slide mechanics.
-	My method relies on checking if slopes contradict with their direction and then calculating the cross product
-	of their normal vectors to obtain the new sliding direction vector.
+	How contradictory slopes are handled:
+	Contradictory means two conjoined slopes contradicting in direction, which results in Lara "wiggling" between
+	two directions or being in endless slide stop anim loop. She can't pass from one slope to the other, getting
+	stuck. With diagonal sliding directions permitted, there are more situations where this can occur than with
+	original TR slide mechanics.
+	The fix method relies on checking if slopes contradict with their direction and then calculating the cross
+	product of their normal vectors to obtain the new sliding direction vector parallel to the intersection.*/
 
-	There is also special case of illegal slope, the fatal illegal slope, where a common sliding direction is not
-	possible. In such case the function is aborted and returns 0. */
-
-int TestLaraSlideNG(Tr4ItemInfo *item, Tr4CollInfo *coll)
+int TestLaraSlideNew(Tr4ItemInfo *item, Tr4CollInfo *coll)
 {
 	static short old_angle = 1;
 
-	if (abs(coll->tilt_x) <= SLIDE_THRESH && abs(coll->tilt_z) <= SLIDE_THRESH)
+	if (abs(coll->tilt_x) <= TILT_THRESHOLD && abs(coll->tilt_z) <= TILT_THRESHOLD)
 		return 0;
 
-	short angleNow = 0, angleNext = 0, intersectOrient = 0;
+	short angleNow = 0, angleNext = 0;
 
 	angleNow = GetSlopeDirection(coll->tilt_x, coll->tilt_z);
 
 	short tRoom = item->room_number;
 	Tr4FloorInfo* floorNow = (Tr4FloorInfo*) GetFloor(item->pos.x_pos, item->pos.y_pos, item->pos.z_pos, &tRoom);
 
-	/* start of block for detecting illegal slope */
+	/* start of block for detecting contradictory slope */
 
 	// predict XZ position in next frame
-	int x_predict = item->pos.x_pos + round(item->speed * sin(RAD(angleNow)));
-	int z_predict = item->pos.z_pos + round(item->speed * cos(RAD(angleNow)));
+	int x_predict = item->pos.x_pos + Round(item->speed * sin(RAD(angleNow)));
+	int z_predict = item->pos.z_pos + Round(item->speed * cos(RAD(angleNow)));
 
 	tRoom = item->room_number;
 	Tr4FloorInfo* floorNext = (Tr4FloorInfo*) GetFloor(x_predict, item->pos.y_pos, z_predict, &tRoom);
@@ -258,7 +269,7 @@ int TestLaraSlideNG(Tr4ItemInfo *item, Tr4CollInfo *coll)
 	// assume slope is legal first
 	bool illegalSlope = false;
 	SlopeTilts slope = GetTiltType(floorNext, x_predict, item->pos.y_pos, z_predict);
-	if (abs(slope.tilt_x) > SLIDE_THRESH || abs(slope.tilt_z) > SLIDE_THRESH)
+	if (abs(slope.tilt_x) > TILT_THRESHOLD || abs(slope.tilt_z) > TILT_THRESHOLD)
 	{
 		angleNext = GetSlopeDirection(slope.tilt_x, slope.tilt_z);
 
@@ -269,7 +280,7 @@ int TestLaraSlideNG(Tr4ItemInfo *item, Tr4CollInfo *coll)
 
 			// intersection line of two planes is parallel to cross product of normal vectors
 			// cross the surface normals of both slopes to get sliding direction vector
-			auto intersect = normal1.cross(normal2);
+			auto intersect = CrossProduct(normal1, normal2);
 
 			if (intersect.y < 0)
 			{
@@ -277,7 +288,7 @@ int TestLaraSlideNG(Tr4ItemInfo *item, Tr4CollInfo *coll)
 				intersect.z = -intersect.z;
 			}
 			
-			intersectOrient = ANG(atan2(intersect.x, intersect.z)); // buggy
+			short intersectOrient = ANG(atan2(float(intersect.x), float(intersect.z)));
 
 			// check if directions are indeed intersecting
 			if (IsIntersecting(angleNow, angleNext, intersectOrient))
@@ -288,7 +299,7 @@ int TestLaraSlideNG(Tr4ItemInfo *item, Tr4CollInfo *coll)
 		}
 	}
 
-	/* end of block for detecting illegal slope */
+	/* end of block for detecting contradictory slope */
 
 	short angDiff = angleNow - item->pos.y_rot;
 	ShiftItem(item, coll);
@@ -321,13 +332,13 @@ int TestLaraSlideNG(Tr4ItemInfo *item, Tr4CollInfo *coll)
 		{
 			if (angDiff > -QUARTER_ANGLE && angDiff <= QUARTER_ANGLE) // forwards sliding
 			{
-				if (angDiff > -MAX_INTERPOLATED_ANGLE && angDiff <= MAX_INTERPOLATED_ANGLE)
+				if (angDiff > -MyData.MaxInterpolatedAngle && angDiff <= MyData.MaxInterpolatedAngle)
 				{
 					short newAngle;
 					if (illegalSlope)
-						newAngle = intersectOrient; // snap immediately to intersect
+						newAngle = angleNow; // snap immediately to intersect direction
 					else
-						newAngle = TurnLerp(item->pos.y_rot, angleNow, SLOPE_LERP_FACTOR);
+						newAngle = TurnLerp(item->pos.y_rot, angleNow, MyData.SlopeLerpFactor);
 
 					item->pos.y_rot = newAngle;
 					move_angle = newAngle;
@@ -348,13 +359,13 @@ int TestLaraSlideNG(Tr4ItemInfo *item, Tr4CollInfo *coll)
 			{
 				angDiff += HALF_ANGLE;
 
-				if (angDiff > -MAX_INTERPOLATED_ANGLE && angDiff <= MAX_INTERPOLATED_ANGLE)
+				if (angDiff > -MyData.MaxInterpolatedAngle && angDiff <= MyData.MaxInterpolatedAngle)
 				{
 					short newAngle;
 					if (illegalSlope)
-						newAngle = intersectOrient;
+						newAngle = angleNow;
 					else
-						newAngle = TurnLerp(item->pos.y_rot + HALF_ANGLE, angleNow, SLOPE_LERP_FACTOR);
+						newAngle = TurnLerp(item->pos.y_rot + HALF_ANGLE, angleNow, MyData.SlopeLerpFactor);
 
 					item->pos.y_rot = newAngle + HALF_ANGLE;
 					move_angle = newAngle;
@@ -394,7 +405,7 @@ void cbInitProgram(int NumberLoadedPlugins, char *VetPluginNames[])
 	ClearMemory(&MyData, sizeof(StrMyData));
 }
 
-/*
+
 void cbInitGame(void)
 {
 	// here you can initialize your global data for whole adventure
@@ -402,9 +413,37 @@ void cbInitGame(void)
 
 }
 
-void cbInitLevel(void)
+void cbInitLevel(int LevelNow, int LevelOld, DWORD FIL_Flags)
 {
+	// here you can initialize specific items of currnet level.
+	// it will be called only once for level, when all items has been already initialized
+	// and just a moment before entering in main game cycle.
 
+	MyData.MaxInterpolatedAngle = QUARTER_ANGLE;
+	MyData.SlopeLerpFactor = SLOPE_LERP_FACTOR;
+
+	for (int i = 0; i < MyData.BaseCustomizeMine.TotCustomize; i++)
+	{
+		auto cust = &MyData.BaseCustomizeMine.pVetCustomize[i];
+
+		if (cust->CustValue == CUST_SLIDING_PARAMETERS)
+		{
+			// TurnInterpolation
+			if (cust->NArguments > 0 && cust->pVetArg[0] > 0)
+			{
+				float value = cust->pVetArg[0] / 100.0f;
+
+				if (value > 1.0f)
+					MyData.SlopeLerpFactor = 1.0f;
+				else
+					MyData.SlopeLerpFactor = value;
+			}
+
+			// MaxInterpolatedAngle
+			if (cust->NArguments > 1 && cust->pVetArg[1] >= 0)
+				MyData.MaxInterpolatedAngle = cust->pVetArg[1];
+		}
+	}
 }
 
 // called everytime player save the game (but also when lara move from a level to another HUB saving). 
@@ -534,7 +573,6 @@ void cbLoadMyData(BYTE *pAdrZone, DWORD SizeData)
 	}
 
 }
-
 // free memory used to store all data about your customize commands loaded in previous level
 void FreeMemoryCustomize(void)
 {
@@ -570,10 +608,22 @@ void FreeMemoryParameters(void)
 	MyData.BaseParametersMine.pVetParameters=NULL;
 }
 
+// this procedure will be called at end of any level
+// you can type here code to free resources allocated for level (that quits now)
+void FreeLevelResources(void)
+{
+
+	// free memory used to store all data about your customize commands loaded in previous level
+	FreeMemoryCustomize();
+	// free memory used to store all data about your parameters commands loaded in previous level
+	FreeMemoryParameters();
+	MyData.BaseAssignSlotMine.TotAssign=0;
+
+}
 // it will be called before beginning the loading for a new level.
 // you can type here code to initialise all variables used for level (to clear old values changed by previous level)
 // and to free resources allocated in old level since now we'are going to another new level.
-/*
+
 void cbInitLoadNewLevel(void)
 {
 	int i;
@@ -602,6 +652,8 @@ void cbInitLoadNewLevel(void)
 	FreeLevelResources();
 
 }
+
+
 
 // this procedure will be called everytime a flipeffect of yours will be engaged
 // you have to elaborate it and then return a TRET_.. value (most common is TRET_PERFORM_ONCE_AND_GO)
@@ -719,8 +771,6 @@ void cbCustomizeMine(WORD CustomizeValue, int NumberOfItems, short *pItemArray)
 	MyData.BaseCustomizeMine.TotCustomize= TotCust;
 	// ---- end of default managemnt for generic customize -------------	
 }
-
-
 // callback called everytime in current level section of the script it has been found an AssignSlot command
 // with one of your OBJ_ constants
 void cbAssignSlotMine(WORD Slot, WORD ObjType)
@@ -766,9 +816,9 @@ void cbParametersMine(WORD ParameterValue, int NumberOfItems, short *pItemArray)
 		(StrGenericParameters *) ResizeMemory(MyData.BaseParametersMine.pVetParameters, SizeMem);
 
 	pMyParam = & MyData.BaseParametersMine.pVetParameters[TotParam-1];
-	
-	// now require memory for all arguments (NumberOfItems) store in pItemArray
 
+	pMyParam->ParamValue = ParameterValue;
+	// now require memory for all arguments (NumberOfItems) store in pItemArray
 	pMyParam->pVetArg = (short *) GetMemory(2 * NumberOfItems);
 	// copy data
 	pMyParam->NArguments = NumberOfItems;
@@ -780,12 +830,12 @@ void cbParametersMine(WORD ParameterValue, int NumberOfItems, short *pItemArray)
 
 }
 
-
 // this procedure will be called every game cycle (at begin of cycle)
 void cbCycleBegin(void)
 {
 
 }
+
 // Not yet linked! To link it add to RequireMyCallBacks() function the row:
 //  	GET_CALLBACK(CB_CYCLE_END, 0, 0, cbCycleEnd);
 // this procedure will be called everygame cycle, at end.
@@ -793,9 +843,9 @@ void cbCycleBegin(void)
 int cbCycleEnd(void)
 {
 
+
 	return RET_CYCLE_CONTINUE;	
 }
-
 
 // this function will be called for each your (common) progressive action to be peformed
 void PerformMyProgrAction(StrProgressiveAction *pAction)
@@ -831,7 +881,7 @@ void cbProgrActionMine(void)
 void cbInitObjects(void) 
 {
 
-}*/
+}
 
 
 // FOR_YOU:
@@ -844,27 +894,25 @@ bool RequireMyCallBacks(void)
 // ************  RequireMyCallBacks() function  *****************
 	// protype of GET_CALLBACK:
 	// GET_CALLBACK(CallBackCB, CBT_Flags, Index, MyProcToCall)
-	// default callbacks required always 
+	
 	GET_CALLBACK(CB_INIT_PROGRAM, 0, 0, cbInitProgram)
+	GET_CALLBACK(CB_INIT_LEVEL, 0,0, cbInitLevel)
+	GET_CALLBACK(CB_CUSTOMIZE_MINE, 0,0, cbCustomizeMine)
+	GET_CALLBACK(CB_INIT_LOAD_NEW_LEVEL, 0,0, cbInitLoadNewLevel)
+
+	/* unused callbacks which you may uncomment if you wish */
+
 	//GET_CALLBACK(CB_INIT_GAME, 0, 0, cbInitGame)
-	//GET_CALLBACK(CB_INIT_LEVEL, 0,0, cbInitLevel)
 	//GET_CALLBACK(CB_SAVING_GAME, 0, 0, cbSaveMyData)
 	//GET_CALLBACK(CB_LOADING_GAME, 0, 0, cbLoadMyData)
-	//GET_CALLBACK(CB_INIT_LOAD_NEW_LEVEL, 0,0, cbInitLoadNewLevel);
-	//GET_CALLBACK(CB_FLIPEFFECT_MINE, 0, 0, cbFlipEffectMine);
-	//GET_CALLBACK(CB_ACTION_MINE, 0,0, cbActionMine);
-	//GET_CALLBACK(CB_CONDITION_MINE,0,0,cbConditionMine);
-	//GET_CALLBACK(CB_CUSTOMIZE_MINE, 0,0, cbCustomizeMine);
-	//GET_CALLBACK(CB_PARAMETER_MINE, 0, 0, cbParametersMine);
-	//GET_CALLBACK(CB_ASSIGN_SLOT_MINE, 0,0, cbAssignSlotMine);
-	//GET_CALLBACK(CB_CYCLE_BEGIN, 0, 0, cbCycleBegin);
-	//GET_CALLBACK(CB_PROGR_ACTION_MINE, 0, 0, cbProgrActionMine);
-	//GET_CALLBACK(CB_INIT_OBJECTS, 0, 0, cbInitObjects);
-	//GET_CALLBACK(CB_ANIMATE_LARA, CBT_AFTER, 0, cbAnimateLara);
-	//GET_CALLBACK(CB_CYCLE_END, 0, 0, cbCycleEnd);
-	//GET_CALLBACK(CB_STATE_ID_LARA_CTRL, CBT_AFTER, 24, cbSlideStateID24);
-	//GET_CALLBACK(CB_STATE_ID_LARA_CTRL, CBT_AFTER, 32, cbSlideStateID32);
-	//GET_CALLBACK(CB_LARA_CONTROL, CBT_AFTER, 0, cbLaraControl);
+	//GET_CALLBACK(CB_FLIPEFFECT_MINE, 0, 0, cbFlipEffectMine)
+	//GET_CALLBACK(CB_ACTION_MINE, 0,0, cbActionMine)
+	//GET_CALLBACK(CB_CONDITION_MINE,0,0,cbConditionMine)
+	//GET_CALLBACK(CB_PARAMETER_MINE, 0, 0, cbParametersMine)
+	//GET_CALLBACK(CB_ASSIGN_SLOT_MINE, 0,0, cbAssignSlotMine)
+	//GET_CALLBACK(CB_CYCLE_BEGIN, 0, 0, cbCycleBegin)
+	//GET_CALLBACK(CB_PROGR_ACTION_MINE, 0, 0, cbProgrActionMine)
+	//GET_CALLBACK(CB_INIT_OBJECTS, 0, 0, cbInitObjects)
 
 	return true;
 }
@@ -890,14 +938,13 @@ bool InitializeAll(void)
 	return true;
 }
 
-
 // FOR_YOU: Tyis function will be called when tomb4 game is to be closed.
 // you should type in this function further codes to free the global
 // resource you had allocated in the InitializeAll() function 
 void ReleaseAll(void)
 {
 // ************  ReleaseAll() function  ******************
-	//FreeLevelResources();
+	FreeLevelResources();
 }
 
 
@@ -926,3 +973,5 @@ BOOL APIENTRY DllMain( HINSTANCE hInstanceDll,
     }
     return TRUE;
 }
+
+

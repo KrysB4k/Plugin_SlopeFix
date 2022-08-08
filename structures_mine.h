@@ -54,9 +54,16 @@ typedef struct StrMyData {
 	StrBaseGenericCustomize BaseCustomizeMine;  // stored all your customize script commands for current level
 	StrBaseGenericParameters BaseParametersMine; // store of all your parameters= script commands of current level
 	StrBaseAssignSlotMine BaseAssignSlotMine; // stored all AssignSlot= command script commands of current level
+
+
+	short MaxInterpolatedAngle;
+	float SlopeLerpFactor;
+
 }MyDataFields;
 // ----------------- END PRESET STRUCTURE ZONE ---------------------------------------
 
+
+// -------------------- Tomb4 Structs ---------------------
 
 typedef struct
 {
@@ -71,13 +78,6 @@ typedef struct
 } phd_3dpos;
 
 
-enum floor_types {
-	FLOOR_TYPE, DOOR_TYPE, TILT_TYPE, ROOF_TYPE, TRIGGER_TYPE, LAVA_TYPE, CLIMB_TYPE, SPLIT1, SPLIT2, SPLIT3, SPLIT4,
-	NOCOLF1T, NOCOLF1B, NOCOLF2T, NOCOLF2B, NOCOLC1T, NOCOLC1B, NOCOLC2T, NOCOLC2B,
-	MONKEY_TYPE, TRIGTRIGGER_TYPE, MINER_TYPE
-};
-
-
 typedef struct
 {
 	WORD index;
@@ -87,75 +87,6 @@ typedef struct
 	BYTE sky_room;
 	char ceiling;
 }Tr4FloorInfo;
-
-
-typedef struct
-{
-	short* data;
-	short* door;
-
-	Tr4FloorInfo* floor;
-
-	void* light;
-	void* mesh;
-
-	int x;
-	int y;
-	int z;
-	int minfloor;
-	int maxceiling;
-
-	short x_size;
-	short y_size;
-
-	int ambient;
-	short num_lights;
-	short num_meshes;
-
-	BYTE ReverbType;
-	BYTE FlipNumber;
-	char MeshEffect;
-	char bound_active;
-
-	short left;
-	short right;
-	short top;
-	short bottom;
-	short test_left;
-	short test_right;
-	short test_top;
-	short test_bottom;
-	short item_number;
-	short fx_number;
-	short flipped_room;
-
-	WORD flags;
-
-	int nVerts;
-	int nWaterVerts;
-	int nShoreVerts;
-
-	void* SourceVB;
-	short* FaceData;
-
-	float posx;
-	float posy;
-	float posz;
-
-	void* vnormals;
-	void* fnormals;
-	int* prelight;
-	int* prelightwater;
-
-	int watercalc;
-
-	void* verts;
-
-	int gt3cnt;
-	int gt4cnt;
-
-	void* pclight;
-}Tr4RoomInfo;
 
 
 typedef struct
@@ -269,49 +200,8 @@ typedef struct
 
 }Tr4ItemInfo; // 15F6
 
-typedef struct
-{
-	short nmeshes;
-	short mesh_index;
-	int bone_index;
 
-	short* frame_base;
-
-	void (*initialise)(short item_number);
-	void (*control)(short item_number);
-	void (*floor)(Tr4ItemInfo* item, int x, int y, int z, int* height);
-	void (*ceiling)(Tr4ItemInfo* item, int x, int y, int z, int* height);
-	void (*draw_routine)(Tr4ItemInfo* item);
-	void (*collision)(short item_num, Tr4ItemInfo* laraitem, Tr4CollInfo* coll);
-
-	short object_mip;
-	short anim_index;
-	short hit_points;
-	short pivot_length;
-	short radius;
-	short shadow_size;
-
-	WORD bite_offset;
-	WORD loaded : 1;
-	WORD intelligent : 1;
-	WORD non_lot : 1;
-	WORD save_position : 1;
-	WORD save_hitpoints : 1;
-	WORD save_flags : 1;
-	WORD save_anim : 1;
-	WORD semi_transparent : 1;
-	WORD water_creature : 1;
-	WORD using_drawanimating_item : 1;
-	WORD HitEffect : 2;
-	WORD undead : 1;
-	WORD save_mesh : 1;
-
-	void (*draw_routine_extra)(Tr4ItemInfo* item);
-	DWORD explodable_meshbits;
-	DWORD pad;
-
-}Tr4SlotInfo; // 40
-
+// -------------------- Custom Structs ---------------------
 
 struct SlopeTilts
 {
