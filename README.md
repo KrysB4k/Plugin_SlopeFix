@@ -1,1 +1,1 @@
-Plugin for TRLE that enables diagonal sliding directions on slopes.
+Plugin for TRLE (TRNG) that enables diagonal sliding directions on slopes.
